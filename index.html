@@ -191,7 +191,7 @@
     pc.onicecandidate = (e) => { if (e.candidate) send({ candidate: e.candidate, to: id }); };
 
     pc.ontrack = (e) => {
-      const stream = e.streams[0];
+      const stream = e.streams[0] || new MediaStream([e.track]);
       if (!p.audio) {
         p.audio = document.createElement('audio');
         p.audio.autoplay = true;
@@ -199,7 +199,9 @@
         document.body.appendChild(p.audio);
       }
       p.audio.srcObject = stream;
-      p.audio.play().catch(() => {});
+      p.audio.muted = false;
+      p.audio.volume = 1;
+      p.audio.play().catch(() => { notice.textContent = 'Tap anywhere to turn on sound.'; });
       if (!people.has(id)) {
         friendCount++;
         addParticipant(id, friendCount === 1 ? 'Friend' : 'Friend ' + friendCount);
@@ -304,6 +306,19 @@
     sfx.play().catch(() => {});
   };
 
+  /* ---------- make sure incoming sound actually plays (phones block autoplay) ---------- */
+  function resumeAudio() {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    peers.forEach(p => {
+      if (p.audio && p.audio.paused) {
+        p.audio.play().then(() => {
+          if (notice.textContent.startsWith('Tap anywhere')) notice.textContent = '';
+        }).catch(() => {});
+      }
+    });
+  }
+  document.addEventListener('pointerdown', resumeAudio);
+
   /* ---------- join / leave ---------- */
   async function joinCall() {
     notice.textContent = '';
@@ -331,6 +346,7 @@
     muteBtn.style.display = 'flex';
     aloneSince = Date.now();
     aloneTimer = setInterval(() => {
+      resumeAudio();
       if (peers.size === 0 && Date.now() - aloneSince > ALONE_LIMIT_MS) {
         leaveCall().then(() => { notice.textContent = 'You were alone for 3 minutes, so the call ended.'; });
       }
