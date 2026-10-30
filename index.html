@@ -133,7 +133,12 @@
 <div class="controls">
   <div class="notice" id="notice"></div>
   <button id="callBtn">Join Voice Chat</button>
-  <div id="volPanel" role="group" aria-label="Volume"></div>
+  <div id="volPanel" role="group" aria-label="Volume">
+    <div class="vol-row"><div class="vol-wrap">
+      <input id="volSlider" class="vol-slider" type="range" min="0" max="200" step="1" value="100" aria-label="Volume of everyone else">
+      <div class="vol-tip" id="volTip" aria-hidden="true">100%</div>
+    </div></div>
+  </div>
   <button id="muteBtn" aria-label="Mute microphone" aria-pressed="false"><img id="muteIcon" alt=""></button>
 </div>
 
@@ -190,88 +195,62 @@
     el.querySelector('.name').textContent = name;
     stage.appendChild(el);
     people.set(id, el);
-    if (id !== 'me') addVolumeRow(id, name);
+    refreshVolumePanel();
   }
   function removeParticipant(id) {
     const el = people.get(id);
     if (el) { el.remove(); people.delete(id); }
-    removeVolumeRow(id);
+    refreshVolumePanel();
   }
 
-  /* ---------- per-person volume (client side only, 0-200%) ---------- */
+  /* ---------- volume: one slider for everyone else (client side only, 0-200%) ---------- */
   const volPanel = document.getElementById('volPanel');
-  const volRows = new Map();    // id -> { row, label, slider, name }
-  const savedVol = new Map();   // id -> percent, remembered while you're in the call
+  const volRow = volPanel.querySelector('.vol-row');
+  const volSlider = document.getElementById('volSlider');
+  const volTip = document.getElementById('volTip');
   const VOL_MAX = 200;
+  let masterVol = 100;   // percent, applies to every other person in the call
 
-  function refreshVolumeLabels() {
-    const solo = volRows.size === 1;
-    volRows.forEach(r => {
-      r.label.textContent = solo ? 'User Volume' : r.name + ' Volume';
-      r.slider.setAttribute('aria-label', r.label.textContent);
-    });
-    volPanel.classList.toggle('show', volRows.size > 0);
+  function paintVolume() {
+    const v = +volSlider.value;
+    volRow.style.setProperty('--p', v / VOL_MAX);
+    volTip.textContent = v + '%';
+    volSlider.setAttribute('aria-valuetext', v + '%');
+  }
+  function refreshVolumePanel() {
+    volPanel.classList.toggle('show', [...people.keys()].some(k => k !== 'me'));
+  }
+  function applyVolume(id) {
+    const p = peers.get(id);
+    if (!p || !p.gain || !audioCtx) return;
+    p.gain.gain.setTargetAtTime(masterVol / 100, audioCtx.currentTime, 0.015);
+  }
+  function resetVolume() {
+    masterVol = 100;
+    volSlider.value = 100;
+    paintVolume();
   }
 
-  function addVolumeRow(id, name) {
-    if (volRows.has(id)) return;
-    const row = document.createElement('div');
-    row.className = 'vol-row';
-    row.innerHTML =
-      '<div class="vol-label"></div>' +
-      '<div class="vol-wrap">' +
-        '<input class="vol-slider" type="range" min="0" max="' + VOL_MAX + '" step="1">' +
-        '<div class="vol-tip" aria-hidden="true"></div>' +
-      '</div>';
-    const label = row.querySelector('.vol-label');
-    const slider = row.querySelector('.vol-slider');
-    const tip = row.querySelector('.vol-tip');
-    slider.value = savedVol.has(id) ? savedVol.get(id) : 100;
-
-    const paint = () => {
-      const v = +slider.value;
-      row.style.setProperty('--p', v / VOL_MAX);
-      tip.textContent = v + '%';
-      slider.setAttribute('aria-valuetext', v + '%');
-    };
+  (function wireVolumeSlider() {
     let down = false, hideTimer = 0;
-    const show = () => row.classList.add('dragging');
-    const hide = () => row.classList.remove('dragging');
-
-    slider.addEventListener('input', () => {
-      paint();
-      savedVol.set(id, +slider.value);
-      applyVolume(id);
+    const show = () => volRow.classList.add('dragging');
+    const hide = () => volRow.classList.remove('dragging');
+    volSlider.addEventListener('input', () => {
+      masterVol = +volSlider.value;
+      paintVolume();
+      peers.forEach((p, id) => applyVolume(id));
       show();
       if (!down) { clearTimeout(hideTimer); hideTimer = setTimeout(hide, 900); }
     });
-    slider.addEventListener('pointerdown', () => {
+    volSlider.addEventListener('pointerdown', () => {
       down = true; show();
       const up = () => { down = false; hide(); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
       window.addEventListener('pointerup', up);
       window.addEventListener('pointercancel', up);
     });
+    paintVolume();
+  })();
 
-    paint();
-    volRows.set(id, { row, label, slider, name });
-    volPanel.appendChild(row);
-    refreshVolumeLabels();
-  }
-
-  function removeVolumeRow(id) {
-    const r = volRows.get(id);
-    if (!r) return;
-    r.row.remove();
-    volRows.delete(id);
-    refreshVolumeLabels();
-  }
-
-  function applyVolume(id) {
-    const p = peers.get(id);
-    if (!p || !p.gain || !audioCtx) return;
-    const v = (savedVol.has(id) ? savedVol.get(id) : 100) / 100;
-    p.gain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.015);
-  }
   function setSpeaking(id, on) {
     const el = people.get(id);
     if (el) el.classList.toggle('speaking', on);
@@ -340,7 +319,7 @@
       p.src = audioCtx.createMediaStreamSource(stream);
       if (!p.gain) {
         p.gain = audioCtx.createGain();
-        p.gain.gain.value = (savedVol.has(id) ? savedVol.get(id) : 100) / 100;
+        p.gain.gain.value = masterVol / 100;
         p.gain.connect(audioCtx.destination);
       }
       p.src.connect(p.gain);
@@ -511,7 +490,7 @@
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     if (channel) { await supabaseClient.removeChannel(channel).catch(() => {}); channel = null; }
     [...people.keys()].forEach(removeParticipant);
-    savedVol.clear();
+    resetVolume();
     muteBtn.style.display = 'none';
     callBtn.style.display = '';
     callBtn.disabled = false;
