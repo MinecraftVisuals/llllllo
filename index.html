@@ -99,17 +99,18 @@
   .person.sharing.watchable .ring { transition: box-shadow .15s, transform .12s; }
   .person.sharing.watchable:hover .ring { transform: scale(1.04); }
 
-  /* Watching: no people in the middle, just their screen (the buttons below keep working) */
-  #screenWrap { display: none; position: relative; padding: 16px 16px 0; }
-  #screenWrap.show { display: block; flex: 1; min-height: 0; }
+  /* Watching: no people in the middle, just their screen as a rounded rectangle sitting above the buttons */
   body.watching .stage { display: none; }
-  #screenVideo {
-    display: block; width: 100%; height: 100%; object-fit: contain; background: #000;
-    border-radius: 12px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 8px 24px rgba(0, 0, 0, .18);
-    cursor: zoom-in;
+  #screenWrap { display: none; align-items: center; justify-content: center; padding: 22px; }
+  #screenWrap.show { display: flex; flex: 1; min-height: 0; }
+  #screenBox {                      /* size is set in JS to match the stream exactly (no black bars) */
+    position: relative; width: 640px; height: 360px; max-width: 100%; max-height: 100%;
+    border-radius: 14px; overflow: hidden; background: #ececef;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 8px 24px rgba(0, 0, 0, .18);
   }
+  #screenVideo { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; cursor: zoom-in; }
   #screenBack {
-    position: absolute; left: 30px; top: 30px; z-index: 2;
+    position: absolute; left: 12px; top: 12px; z-index: 2;
     padding: 7px 14px; border: 0; border-radius: 999px; font-size: 14px;
     color: #fff; background: rgba(0, 0, 0, .55); cursor: pointer;
   }
@@ -229,7 +230,7 @@
 </head>
 <body>
 
-<div id="screenWrap"><video id="screenVideo" autoplay playsinline muted title="Double-click for fullscreen"></video><button id="screenBack" aria-label="Back to the call">&larr; Back</button></div>
+<div id="screenWrap"><div id="screenBox"><video id="screenVideo" autoplay playsinline muted title="Double-click for fullscreen"></video><button id="screenBack" aria-label="Back to the call">&larr; Back</button></div></div>
 
 <main class="stage" id="stage"></main>
 
@@ -295,6 +296,7 @@
   const shareBtn = document.getElementById('shareBtn');
   const shareIcon = document.getElementById('shareIcon');
   const screenBack = document.getElementById('screenBack');
+  const screenBox = document.getElementById('screenBox');
   const screenWrap = document.getElementById('screenWrap');
   const screenVideo = document.getElementById('screenVideo');
   const notice = document.getElementById('notice');
@@ -696,11 +698,28 @@
     if (screenVideo.srcObject !== p.video) screenVideo.srcObject = p.video;
     screenVideo.play().catch(() => {});
   }
+  // Make the rectangle exactly the stream's shape, as big as fits (with the margin) above the buttons.
+  function fitScreen() {
+    if (!watching) return;
+    const vw = screenVideo.videoWidth || 16, vh = screenVideo.videoHeight || 9;
+    const cs = getComputedStyle(screenWrap);
+    const w = screenWrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const h = screenWrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (w <= 0 || h <= 0) return;
+    const k = Math.min(w / vw, h / vh);
+    screenBox.style.width = Math.floor(vw * k) + 'px';
+    screenBox.style.height = Math.floor(vh * k) + 'px';
+  }
+  screenVideo.addEventListener('loadedmetadata', fitScreen);
+  screenVideo.addEventListener('resize', fitScreen);
+  window.addEventListener('resize', fitScreen);
+
   function enterWatch(id) {
     if (watching) return;
     watching = id;
     document.body.classList.add('watching');
     screenWrap.classList.add('show');
+    fitScreen();
     showScreen(id);               // already have video from an earlier watch? show it right away
     send({ watch: true, to: id });
   }
@@ -728,9 +747,12 @@
     });
   }
   screenBack.onclick = () => exitWatch(true);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && watching && !document.fullscreenElement) exitWatch(true);
-  });
+  window.addEventListener('keydown', (e) => {
+    if ((e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27) && watching && !document.fullscreenElement) {
+      e.preventDefault();
+      exitWatch(true);   // ESC = leave the screenshare view and go back to the people
+    }
+  }, true);
   screenVideo.addEventListener('dblclick', () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else if (screenVideo.requestFullscreen) screenVideo.requestFullscreen().catch(() => {});
