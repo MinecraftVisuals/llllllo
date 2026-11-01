@@ -115,6 +115,11 @@
     color: #fff; background: rgba(0, 0, 0, .55); cursor: pointer;
   }
   #screenBack:hover { background: rgba(0, 0, 0, .75); }
+  /* Floating player (desktop app): the window shrinks to a small always-on-top box showing only the screen */
+  body.mini { background: #000; }
+  body.mini .controls, body.mini #screenBack { display: none !important; }
+  body.mini #screenWrap { padding: 0; }
+  body.mini #screenBox { border-radius: 0; box-shadow: none; max-width: none; max-height: none; background: #000; }
 
   /* Discord-style "User Volume" slider, sits above the mute button */
   #volPanel {
@@ -230,7 +235,7 @@
 </head>
 <body>
 
-<div id="screenWrap"><div id="screenBox"><video id="screenVideo" autoplay playsinline muted title="Double-click for fullscreen"></video><button id="screenBack" aria-label="Back to the call">&larr; Back</button></div></div>
+<div id="screenWrap"><div id="screenBox"><video id="screenVideo" autoplay playsinline muted title="Double-click for fullscreen. Press P for the floating player"></video><button id="screenBack" aria-label="Back to the call">&larr; Back</button></div></div>
 
 <main class="stage" id="stage"></main>
 
@@ -725,10 +730,41 @@
     showScreen(id);               // already have video from an earlier watch? show it right away
     send({ watch: true, to: id });
   }
+  /* Floating player: in the desktop app P shrinks the window to a small always-on-top box (see CallApp.cs);
+     in a normal browser P uses the browser's own picture-in-picture window instead. */
+  const host = window.chrome && window.chrome.webview;
+  let mini = false;
+  function setMini(on) {
+    if (!host || mini === on) return;
+    mini = on;
+    document.body.classList.toggle('mini', on);
+    try { host.postMessage(on ? 'mini:on' : 'mini:off'); } catch (_) {}
+    setTimeout(fitScreen, 60);
+    setTimeout(fitScreen, 300);
+  }
+  async function toggleFloat() {
+    if (!watching) return;
+    if (host) { setMini(!mini); return; }
+    if (!document.pictureInPictureEnabled) return;
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await screenVideo.requestPictureInPicture();
+    } catch (_) {}
+  }
+  window.addEventListener('keydown', (e) => {
+    if ((e.key !== 'p' && e.key !== 'P') || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target, tag = t && t.tagName;
+    if (t && (t.isContentEditable || tag === 'TEXTAREA' || (tag === 'INPUT' && t.type !== 'range'))) return;
+    if (!watching) return;
+    e.preventDefault();
+    toggleFloat();
+  });
   function exitWatch(notify) {
     if (!watching) return;
     const id = watching;
     watching = null;
+    setMini(false);
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
     document.body.classList.remove('watching');
     screenWrap.classList.remove('show');
     screenVideo.srcObject = null;
