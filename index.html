@@ -458,7 +458,7 @@
   const peers = new Map();    // id -> { pc, audio, pending, metered }
   const meters = new Map();   // id -> interval
   let shareStream = null;     // my screen capture while I'm sharing
-  let currentSharer = null;   // 'me' or a peer id: only one person shares at a time
+  const sharers = new Set();  // 'me' and/or peer ids: anyone can share at the same time
   let watching = null;        // peer id whose screen I'm looking at (null = normal view)
 
   function send(payload) {
@@ -542,7 +542,7 @@
     try { if (p.src) p.src.disconnect(); if (p.gain) p.gain.disconnect(); } catch (_) {}
     if (p.audio) { p.audio.srcObject = null; p.audio.remove(); }
     clearInterval(meters.get(id)); meters.delete(id);
-    if (currentSharer === id) { currentSharer = null; hideScreen(); updateShareUI(); }
+    if (sharers.delete(id)) { if (watching === id) hideScreen(); applySharingRing(); updateShareUI(); }
     removeParticipant(id);
     if (peers.size === 0) aloneSince = Date.now();
   }
@@ -569,8 +569,8 @@
         removePeer(from);
       } else if (payload.share !== undefined) {
         // someone started / stopped sharing their screen
-        if (payload.share) currentSharer = from;
-        else if (currentSharer === from) { currentSharer = null; if (watching === from) hideScreen(); }
+        if (payload.share) sharers.add(from);
+        else { sharers.delete(from); if (watching === from) hideScreen(); }
         applySharingRing();
         updateShareUI();
       } else if (payload.watch !== undefined) {
@@ -657,7 +657,6 @@
 
   async function startShare() {
     if (!localStream || shareStream) return;
-    if (currentSharer && currentSharer !== 'me') return;
     const gdm = (c) => navigator.mediaDevices.getDisplayMedia(c);
     let stream = null;
     try {
@@ -672,7 +671,7 @@
     if (!localStream) { stream.getTracks().forEach(t => t.stop()); return; }   // left the call meanwhile
     try { stream.getVideoTracks()[0].contentHint = 'motion'; } catch (_) {}   // favour smooth 60fps over sharpness
     shareStream = stream;
-    currentSharer = 'me';
+    sharers.add('me');
     stream.getVideoTracks()[0].addEventListener('ended', () => stopShare(true));   // Chrome's own "Stop sharing" bar
     send({ share: true });   // nothing is sent to anyone until they click my avatar to watch
     applySharingRing();
@@ -684,7 +683,7 @@
     shareStream = null;
     s.getTracks().forEach(t => t.stop());
     peers.forEach(p => { if (p.videoTx) p.videoTx.sender.replaceTrack(null).catch(() => {}); });
-    if (currentSharer === 'me') currentSharer = null;
+    sharers.delete('me');
     if (notify && channel) send({ share: false });
     applySharingRing();
     updateShareUI();
@@ -737,11 +736,11 @@
   }
   function hideScreen() { exitWatch(false); }   // sharer stopped / left: just close the view
   function onPersonClick(id) {
-    if (id !== 'me' && id === currentSharer) enterWatch(id);
+    if (id !== 'me' && sharers.has(id)) enterWatch(id);
   }
   function applySharingRing() {
     people.forEach((el, id) => {
-      const on = id === currentSharer;
+      const on = sharers.has(id);
       el.classList.toggle('sharing', on);
       el.classList.toggle('watchable', on && id !== 'me');
       if (on) el.classList.remove('speaking');
@@ -763,11 +762,10 @@
 
   function updateShareUI() {
     const mine = !!shareStream;
-    const other = !!currentSharer && currentSharer !== 'me';
     shareBtn.classList.toggle('on', mine);
     shareBtn.setAttribute('aria-pressed', String(mine));
-    shareBtn.disabled = other;
-    const label = mine ? 'Stop sharing your screen' : other ? 'Someone else is sharing' : 'Share your screen';
+    shareBtn.disabled = false;
+    const label = mine ? 'Stop sharing your screen' : 'Share your screen';
     shareBtn.setAttribute('aria-label', label);
     shareBtn.title = label;
   }
@@ -866,7 +864,7 @@
     if (people.has('me') && window.stopSongForMe) window.stopSongForMe();   // leaving the call stops the song for you
     clearInterval(aloneTimer); aloneTimer = null;
     stopShare(false);
-    currentSharer = null; hideScreen(); applySharingRing(); updateShareUI();
+    sharers.clear(); hideScreen(); applySharingRing(); updateShareUI();
     send({ leave: true });
     [...peers.keys()].forEach(removePeer);
     meters.forEach(clearInterval); meters.clear();
