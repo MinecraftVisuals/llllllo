@@ -68,6 +68,8 @@
   }
   #muteBtn:hover, #deafBtn:hover { background: #d9dadf; }
   #muteBtn:active, #deafBtn:active { transform: scale(.95); }
+  #muteBtn:disabled { opacity: .45; cursor: not-allowed; transform: none; }   /* listener mode (no mic) */
+  #muteBtn:disabled:hover { background: #e6e7ea; }
   #muteBtn img, #deafBtn img { width: 28px; height: 28px; display: block; pointer-events: none; }
 
   /* Same curved box as the mute button, but red with a white phone icon */
@@ -495,6 +497,7 @@
 
   let channel = null;
   let localStream = null;
+  let noMic = false;          // joined as a listener (no microphone available)
   let audioCtx = null;
   let muted = false;
   let aloneSince = 0;
@@ -532,6 +535,7 @@
     aloneSince = 0;
 
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+    if (!localStream.getAudioTracks().length) pc.addTransceiver('audio', { direction: 'recvonly' });   // no mic: still receive everyone's audio
 
     pc.onicecandidate = (e) => { if (e.candidate) send({ candidate: e.candidate, to: id }); };
 
@@ -877,6 +881,7 @@
     if (muted) setSpeaking('me', false);
   }
   muteBtn.onclick = () => {
+    if (noMic) return;
     muted = !muted;
     applyMute();
     sfx.currentTime = 0;
@@ -907,22 +912,32 @@
     callBtn.textContent = 'Connecting...';
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     audioCtx.resume();
+    noMic = false;
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
       });
+    } catch (err) {
+      // No mic (or permission denied): join anyway as a listener with an empty stream.
+      localStream = new MediaStream();
+      noMic = true;
+    }
+    try {
       await openChannel();
     } catch (err) {
       await leaveCall();
-      notice.textContent = 'Could not join. Check microphone permission and your connection.';
+      notice.textContent = 'Could not join. Check your connection.';
       return;
     }
     friendCount = 0;
-    muted = START_MUTED;
+    muted = noMic ? true : START_MUTED;
     applyMute();
+    muteBtn.disabled = noMic;
+    muteBtn.title = noMic ? 'No microphone: you can listen but not talk' : '';
     addParticipant('me', 'You');
-    setupVoiceMeter(localStream, 'me');
+    if (noMic) notice.textContent = 'No microphone found, so you joined as a listener. You can hear everyone.';
+    else setupVoiceMeter(localStream, 'me');
     callBtn.style.display = 'none';
     callBtns.style.display = 'flex';
     aloneSince = Date.now();
@@ -949,6 +964,8 @@
     [...people.keys()].forEach(removeParticipant);
     resetVolume();
     deafened = false; applyDeafen();
+    noMic = false;
+    muteBtn.disabled = false; muteBtn.title = '';
     callBtns.style.display = 'none';
     callBtn.style.display = '';
     callBtn.disabled = false;
