@@ -318,9 +318,11 @@
       username: '000000002108871799', credential: '8ovAg4+2vyyeLJL3nExyz0xVERk=' }
   ];
 
-  /* Screenshare quality: 720p @ 60fps (video only goes to people who are watching) */
-  const SHARE_MAX_BITRATE = 4000000;  // 4 Mbps per viewer
-  const SHARE_MAX_HEIGHT = 720;       // 720p
+  /* Screenshare quality: up to 1080p @ 60fps (video only goes to people who are watching).
+     The browser lowers resolution/framerate by itself if the connection or CPU can't keep up. */
+  const SHARE_MAX_BITRATE = 8000000;  // 8 Mbps per viewer (ceiling, not a target)
+  const SHARE_MAX_HEIGHT = 1080;      // 1080p
+  const SHARE_MAX_WIDTH = 1920;
   const SHARE_MAX_FPS = 60;
 
   const MIC_ON  = 'data:image/png;base64,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';
@@ -674,8 +676,19 @@
     } catch (_) {
       p.videoTx = p.pc.addTransceiver(track, { direction: 'sendonly', streams: [shareStream] });
     }
+    preferH264(p.videoTx);
     tuneSender(p.videoTx.sender, track);
     if (id) { p.reneg = true; tryReneg(id); }
+  }
+  // H.264 is hardware-encoded on most PCs, which keeps the sharer's CPU free and cuts encode lag.
+  // Other codecs stay in the list, so it falls back automatically if the other side can't decode it.
+  function preferH264(tx) {
+    try {
+      if (!tx.setCodecPreferences || !RTCRtpSender.getCapabilities) return;
+      const codecs = RTCRtpSender.getCapabilities('video').codecs;
+      const rank = (c) => /h264/i.test(c.mimeType) ? 0 : /vp9/i.test(c.mimeType) ? 1 : /vp8/i.test(c.mimeType) ? 2 : /av1/i.test(c.mimeType) ? 3 : 4;
+      tx.setCodecPreferences(codecs.slice().sort((a, b) => rank(a) - rank(b)));
+    } catch (_) {}
   }
   async function tuneSender(sender, track) {
     try {
@@ -684,7 +697,9 @@
       params.encodings[0].maxBitrate = SHARE_MAX_BITRATE;
       params.encodings[0].maxFramerate = SHARE_MAX_FPS;
       params.encodings[0].scaleResolutionDownBy = shareScale(track);
-      params.degradationPreference = 'maintain-framerate';   // under load, drop resolution before frames
+      params.degradationPreference = 'balanced';   // under load, lower resolution and framerate together (stays smooth AND sharp)
+      params.encodings[0].networkPriority = 'high';
+      params.encodings[0].priority = 'high';
       await sender.setParameters(params);
     } catch (_) {}
   }
@@ -709,7 +724,7 @@
     let stream = null;
     try {
       stream = await gdm({
-        video: { frameRate: { ideal: SHARE_MAX_FPS, max: SHARE_MAX_FPS }, width: { max: 1280 }, height: { ideal: SHARE_MAX_HEIGHT, max: SHARE_MAX_HEIGHT } },
+        video: { frameRate: { ideal: SHARE_MAX_FPS, max: SHARE_MAX_FPS }, width: { ideal: SHARE_MAX_WIDTH, max: SHARE_MAX_WIDTH }, height: { ideal: SHARE_MAX_HEIGHT, max: SHARE_MAX_HEIGHT } },
         audio: false
       });
     } catch (err) {
@@ -739,6 +754,8 @@
 
   // Receiving: the sharer has a red ring; click it to see just their screen (no people), click Back to return.
   function onVideoTrack(id, p, e) {
+    try { e.receiver.playoutDelayHint = 0; } catch (_) {}      // show frames as soon as they arrive
+    try { e.receiver.jitterBufferTarget = 40; } catch (_) {}   // small buffer = low latency (ms)
     p.video = e.streams[0] || new MediaStream([e.track]);
     if (watching === id) showScreen(id);
   }
