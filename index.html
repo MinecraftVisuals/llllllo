@@ -933,6 +933,7 @@
 
   /* ---------- join / leave ---------- */
   async function joinCall() {
+    if (window.stopLobbySong) window.stopLobbySong();   // joining the call stops the lobby song
     notice.textContent = '';
     callBtn.disabled = true;
     callBtn.textContent = 'Connecting...';
@@ -949,6 +950,7 @@
       localStream = new MediaStream();
       noMic = true;
     }
+    if (window.stopLobbySong) window.stopLobbySong();   // covers a song started while the mic prompt was open
     try {
       await openChannel();
     } catch (err) {
@@ -1152,12 +1154,14 @@
     const byId = {};
     SONGS.forEach(s => { if (s.id) byId[s.id] = s; });
     let currentId = null;        // song that is playing right now (null = nothing)
+    let lobbyPlaying = false;    // true while a song is looping privately in the lobby (not in a call)
+    const inCall = () => !!localStream;
     let pending = null;          // { id, at } when a broadcast arrived but the browser blocked autoplay
 
     const songChannel = supabaseClient.channel(ROOM + '-song', { config: { broadcast: { self: false } } });
     songChannel
-      .on('broadcast', { event: 'song' }, ({ payload }) => startSong((payload && payload.id) || SONGS[0].id, true))
-      .on('broadcast', { event: 'songstop' }, () => stopAll())
+      .on('broadcast', { event: 'song' }, ({ payload }) => { if (lobbyPlaying) return; startSong((payload && payload.id) || SONGS[0].id, true); })
+      .on('broadcast', { event: 'songstop' }, () => { if (lobbyPlaying) return; stopAll(); })
       .subscribe();
 
     function showPlaying(id) {
@@ -1175,8 +1179,10 @@
       SONGS.forEach(s => {
         if (!s.audio) return;
         s.audio.pause();
+        s.audio.loop = false;
         try { s.audio.currentTime = 0; } catch (_) {}
       });
+      lobbyPlaying = false;
       pending = null;
       clearNotice();
       showPlaying(null);
@@ -1188,14 +1194,18 @@
       if (!s) return;
       if (currentId === id && !offset) return;       // already playing this one: ignore duplicate broadcasts
       SONGS.forEach(o => {                            // only one song at a time
-        if (o.audio && o !== s) { o.audio.pause(); try { o.audio.currentTime = 0; } catch (_) {} }
+        if (o.audio && o !== s) { o.audio.pause(); o.audio.loop = false; try { o.audio.currentTime = 0; } catch (_) {} }
       });
+      const lobby = !fromRemote && !inCall();         // my own press while not in a call = private looping lobby song
+      s.audio.loop = lobby;
+      lobbyPlaying = lobby;
       pending = null;
       showPlaying(id);
       try { s.audio.currentTime = offset || 0; } catch (_) {}
       const p = s.audio.play();
       if (p && p.catch) p.catch(() => {
         if (currentId === id) showPlaying(null);
+        if (lobby) { lobbyPlaying = false; s.audio.loop = false; }
         if (fromRemote) {
           // this person hasn't touched the page yet, so the browser blocks sound - wait for their first tap
           pending = { id, at: Date.now() - (offset ? offset * 1000 : 0) };
@@ -1205,13 +1215,14 @@
     }
 
     function pressSong(id) {
-      if (currentId === id) {                         // pressed again: stop it for everybody
+      const shared = inCall();                        // in the lobby everything stays on this device only
+      if (currentId === id) {                         // pressed again: stop it (for everybody if in a call)
         stopAll();
-        songChannel.send({ type: 'broadcast', event: 'songstop', payload: { id, from: myId } });
+        if (shared) songChannel.send({ type: 'broadcast', event: 'songstop', payload: { id, from: myId } });
         return;
       }
       startSong(id, false);
-      songChannel.send({ type: 'broadcast', event: 'song', payload: { id, from: myId } });
+      if (shared) songChannel.send({ type: 'broadcast', event: 'song', payload: { id, from: myId } });
     }
 
     // If sound was blocked, the first tap/key press lets it in and joins at the right point of the song.
@@ -1223,6 +1234,7 @@
       const length = isFinite(s.audio.duration) && s.audio.duration ? s.audio.duration : s.length;
       if (elapsed >= length - 1) { pending = null; clearNotice(); return; }
       const id = pending.id;
+      s.audio.loop = false;
       s.audio.currentTime = elapsed;
       const p = s.audio.play();
       if (p && p.then) p.then(() => {
@@ -1234,6 +1246,7 @@
     ['pointerdown', 'pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, joinLate));
 
     window.stopSongForMe = stopAll;                   // used by leaveCall(): stops it for this person only (no broadcast)
+    window.stopLobbySong = () => { if (lobbyPlaying) stopAll(); };   // used by joinCall(): joining the call ends the lobby song
 
     SONGS.forEach(s => {
       if (!s.audio) return;
@@ -1243,6 +1256,7 @@
       });
       s.audio.addEventListener('error', () => {
         if (currentId === s.id) showPlaying(null);
+        lobbyPlaying = false;
         notice.textContent = 'Could not load the song file.';
       });
     });
