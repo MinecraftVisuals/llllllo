@@ -177,6 +177,15 @@
   }
   .vol-row.dragging .vol-tip { opacity: 1; }
 
+  /* Lobby music volume (1-500%), sits above the Join button */
+  #musicPanel {
+    width: 156px; padding: 0;
+    font-family: "Lilita One", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #musicPanel .vol-row { padding: 2px 0 6px; }
+  .music-cap { display: flex; justify-content: space-between; font-size: 12px; line-height: 16px; color: #777; padding-bottom: 4px; }
+
   /* Spotify logo (bottom left) + tiny song picker */
   #spotifyBtn {
     position: fixed; left: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px));
@@ -279,6 +288,12 @@
 
 <div class="controls">
   <div class="notice" id="notice"></div>
+  <div id="musicPanel" role="group" aria-label="Music volume">
+    <div class="music-cap"><span>Music volume</span><span id="musicPct">100%</span></div>
+    <div class="vol-row" id="musicRow"><div class="vol-wrap">
+      <input id="musicSlider" class="vol-slider" type="range" min="1" max="500" step="1" value="100" aria-label="Music volume (1 to 500 percent)">
+    </div></div>
+  </div>
   <button id="callBtn">Join Voice Chat</button>
   <div id="volPanel" role="group" aria-label="Volume">
     <div class="vol-row"><div class="vol-wrap">
@@ -494,6 +509,52 @@
     });
     paintVolume();
   })();
+
+  /* ---------- music volume (lobby slider, 1-500%) ----------
+     An <audio> element's own volume stops at 100%, so songs are routed through a Web Audio gain node.
+     Each song keeps its own loudness-matched volume; this slider multiplies on top of it. */
+  const musicPanel = document.getElementById('musicPanel');
+  const musicRow = document.getElementById('musicRow');
+  const musicSlider = document.getElementById('musicSlider');
+  const musicPct = document.getElementById('musicPct');
+  let musicVol = 100;            // percent, 1-500
+  let musicCtx = null, musicGain = null;
+  const musicRouted = new WeakSet();
+
+  function paintMusicVolume() {
+    const min = +musicSlider.min, max = +musicSlider.max;
+    musicRow.style.setProperty('--p', (musicVol - min) / (max - min));
+    musicPct.textContent = musicVol + '%';
+    musicSlider.setAttribute('aria-valuetext', musicVol + '%');
+  }
+  function applyMusicVolume() {
+    if (musicGain && musicCtx) musicGain.gain.setTargetAtTime(musicVol / 100, musicCtx.currentTime, 0.015);
+  }
+  // called right before a song plays (so inside the user's tap): makes sure the song goes through the gain node
+  window.prepMusic = function (audio) {
+    try {
+      if (!musicCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        musicCtx = new AC();
+        musicGain = musicCtx.createGain();
+        musicGain.gain.value = musicVol / 100;
+        musicGain.connect(musicCtx.destination);
+      }
+      if (musicCtx.state === 'suspended') musicCtx.resume().catch(() => {});
+      if (audio && !musicRouted.has(audio)) {
+        musicRouted.add(audio);
+        musicCtx.createMediaElementSource(audio).connect(musicGain);
+      }
+    } catch (_) { /* if Web Audio isn't available the song still plays, just capped at 100% */ }
+  };
+  musicSlider.addEventListener('input', () => {
+    musicVol = +musicSlider.value;
+    paintMusicVolume();
+    applyMusicVolume();
+    if (musicCtx && musicCtx.state === 'suspended') musicCtx.resume().catch(() => {});
+  });
+  paintMusicVolume();
 
   function setSpeaking(id, on) {
     const el = people.get(id);
@@ -967,6 +1028,7 @@
     if (noMic) notice.textContent = 'No microphone found, so you joined as a listener. You can hear everyone.';
     else setupVoiceMeter(localStream, 'me');
     callBtn.style.display = 'none';
+    musicPanel.style.display = 'none';
     callBtns.style.display = 'flex';
     aloneSince = Date.now();
     aloneTimer = setInterval(() => {
@@ -996,6 +1058,7 @@
     muteBtn.disabled = false; muteBtn.title = '';
     callBtns.style.display = 'none';
     callBtn.style.display = '';
+    musicPanel.style.display = '';
     callBtn.disabled = false;
     callBtn.textContent = 'Join Voice Chat';
   }
@@ -1202,6 +1265,7 @@
       pending = null;
       showPlaying(id);
       try { s.audio.currentTime = offset || 0; } catch (_) {}
+      if (window.prepMusic) window.prepMusic(s.audio);
       const p = s.audio.play();
       if (p && p.catch) p.catch(() => {
         if (currentId === id) showPlaying(null);
@@ -1236,6 +1300,7 @@
       const id = pending.id;
       s.audio.loop = false;
       s.audio.currentTime = elapsed;
+      if (window.prepMusic) window.prepMusic(s.audio);
       const p = s.audio.play();
       if (p && p.then) p.then(() => {
         pending = null;
@@ -1265,7 +1330,7 @@
       panel.style.bottom = '';                       // default: just above the logo
       const pr = panel.getBoundingClientRect();
       let top = Infinity;
-      [notice, callBtn, callBtns, volPanel].forEach(el => {
+      [notice, musicPanel, callBtn, callBtns, volPanel].forEach(el => {
         if (!el || el.offsetParent === null) return;
         const r = el.getBoundingClientRect();
         if (r.width && r.height && r.left < pr.right + 12 && r.right > pr.left - 12) top = Math.min(top, r.top);
@@ -1360,7 +1425,7 @@
       panel.style.bottom = '';
       const pr = panel.getBoundingClientRect();
       let top = Infinity;
-      [notice, callBtn, callBtns, volPanel].forEach(el => {
+      [notice, musicPanel, callBtn, callBtns, volPanel].forEach(el => {
         if (!el || el.offsetParent === null) return;
         const r = el.getBoundingClientRect();
         if (r.width && r.height && r.left < pr.right + 12 && r.right > pr.left - 12) top = Math.min(top, r.top);
